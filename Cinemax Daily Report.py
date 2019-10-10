@@ -172,7 +172,13 @@ def replicate_down(raw_list):
       column_names.append(raw_list[i])
 
   return(column_names)
-  
+
+
+def print_unique_count(df):
+    for i in list(df):
+        print(i+':',len(df[i].unique()))
+        
+
 #%%  Parse the files to see how to process each one
         
 file_list = pd.Series(onlyfiles)
@@ -449,13 +455,23 @@ import itertools
 
 
 regional_list = []
+smaller_reg_list = []
+
 for region in list(min_by_min_df['Region'].unique()):
     dimensions = pd.DataFrame(list(itertools.product(list(min_by_min_df.loc[min_by_min_df['Region']==region,'Channel'].unique()),
                                                      list(min_by_min_df.loc[min_by_min_df['Region']==region,'Target'].unique()),
                                                      list(prg_df.loc[prg_df['Region']==region,'Insertion'].unique()))))
-    dimensions['Region'] = region
-    regional_list.append(dimensions)
 
+    loop_dimensions = pd.DataFrame(list(itertools.product(list(min_by_min_df.loc[min_by_min_df['Region']==region,'Channel'].unique()),
+                                                     list(min_by_min_df.loc[min_by_min_df['Region']==region,'Target'].unique()),
+                                                     list(prg_df['Date'].unique()))))
+    dimensions['Region'] = region
+    loop_dimensions['Region'] = region
+    
+    regional_list.append(dimensions)
+    smaller_reg_list.append(loop_dimensions)
+
+# compile the detailed dimensions    
 reg_dimensions = pd.concat(regional_list)
 reg_dimensions.columns = ['Channel','Target','Insertion','Region']
 
@@ -463,49 +479,136 @@ dimensions = reg_dimensions.merge(prg_df, how='left', left_on=['Insertion','Regi
 dimensions = dimensions.loc[:,['Region','Target','Channel_x','Description','Date','Start_time_str']]
 dimensions.loc[:,'Start_time_str'] = dimensions['Start_time_str'].str.replace('\:00$','',regex=True)
 
-
-def print_unique_count(df):
-    for i in list(df):
-        print(i+':',len(df[i].unique()))
-
-# Inisital try with a for loop
+# compile the looping dimensions
+loop_dims = pd.concat(smaller_reg_list)
+loop_dims.columns = ['Channel','Target','Date','Region']
 
 
-#for i in range(len(test)):
+def prg_rating(region,target,channel,date):
+    
+    # This function uses the following datasets:
+    ## min_by_min_df <-- holds all the ratings information at a 5 min level
+    ## extrapolator <-- maps the 5 mins to 1 min intervals
+    ## dimensions <-- holds all the "timebands" (aka programs)
+    
+    # e.g. This would be a dataframe for Argentina, P18-49, Cinemax, 9/16/2019
+    temp = min_by_min_df.loc[(min_by_min_df['Region']==region)&
+                             (min_by_min_df['Target']==target)&
+                             (min_by_min_df['Channel']==channel)&
+                             (min_by_min_df['Date_val']==date),:]
+    temp = temp.sort_values('Start Time')
+    
+    # combine with the extrapolator to go from 5 to 1 minute detail
+    extra_temp = extrapolator.merge(temp, how='left', left_on='Start Time_5mins', right_on='Start Time')
+    extra_temp = extra_temp.loc[:,['Target','Region','Channel','Date_val','Start Time_x','Start Time_5mins','Rat#']]
+    
+    # 
+    dim_temp = extra_temp.merge(dimensions.loc[dimensions['Channel_x']==channel,:], how='left', left_on=['Target','Region','Date_val','Start Time_x',], right_on=['Target','Region','Date','Start_time_str',])
+    dim_temp = dim_temp.loc[:,['Target',
+                               'Region',
+                               'Channel',
+                               'Description',
+                               'Date_val',
+                               'Start_time_str',
+                               'Start Time_x',
+                               'Rat#']]
+                               
+                               
+    dim_temp.loc[:,'Description'] = replicate_down(list(dim_temp['Description']))
+    dim_temp.loc[:,'Start_time_str'] = replicate_down(list(dim_temp['Start_time_str']))
+    
+    
+    new_prg_df = dim_temp.groupby(['Target', 'Region', 'Channel', 'Description','Date_val','Start_time_str'])['Rat#'].mean()
+    new_prg_df = new_prg_df.reset_index().sort_values('Start_time_str')
+    new_prg_df = new_prg_df.reset_index(drop=True)
+    
+    return(new_prg_df)
 
+# test it out
+    
+r = dimensions.iloc[0,0]
+t = dimensions.iloc[0,1]
+c = dimensions.iloc[0,2]
+d = dimensions.iloc[0,4]
+
+start_time = time.time()
+prg_rating(r,t,c,d)
+print('Total time:',str(round((time.time() - start_time),4)),'seconds')
+
+#%% Loop and get every channel's rating for our prg channel Cinemax
+
+df_stack = []
 
 start_time = time.time()
 
-i = 0
-# e.g. This would be a dataframe for Argentina, P18-49, Cinemax, 9/16/2019
-temp = min_by_min_df.loc[(min_by_min_df['Region']==dimensions.iloc[i,0])&
-                         (min_by_min_df['Target']==dimensions.iloc[i,1])&
-                         (min_by_min_df['Channel']==dimensions.iloc[i,2])&
-                         (min_by_min_df['Date_val']==dimensions.iloc[i,4]),:]
-temp = temp.sort_values('Start Time')
+for i in tqdm(range(len(loop_dims))):
+    r = loop_dims.iloc[i,3]
+    t = loop_dims.iloc[i,1]
+    c = loop_dims.iloc[i,0]
+    d = loop_dims.iloc[i,2]
+    df_stack.append(prg_rating(r,t,c,d))
+    
+print('Total time:',str(round((time.time() - start_time),4)),'seconds')
 
-# combine with the extrapolator to go from 5 to 1 minute detail
-extra_temp = extrapolator.merge(temp, how='left', left_on='Start Time_5mins', right_on='Start Time')
-extra_temp = extra_temp.loc[:,['Target','Region','Channel','Date_val','Start Time_x','Start Time_5mins','Rat#']]
+# stack and clean
 
-# 
-dim_temp = extra_temp.merge(dimensions.loc[dimensions['Channel_x']==dimensions.iloc[i,2],:], how='left', left_on=['Target','Region','Date_val','Start Time_x',], right_on=['Target','Region','Date','Start_time_str',])
-dim_temp = dim_temp.loc[:,['Target',
-                           'Region',
-                           'Channel',
-                           'Description',
-                           'Date_val',
-                           'Start_time_str',
-                           'Start Time_x',
-                           'Rat#']]
-                           
-                           
-dim_temp.loc[:,'Description'] = replicate_down(list(dim_temp['Description']))
-dim_temp.loc[:,'Start_time_str'] = replicate_down(list(dim_temp['Start_time_str']))
+start_time = time.time()
+
+attributed_prg = pd.concat(df_stack)
+attributed_prg.loc[:,'Channel'] = attributed_prg['Channel'].str.replace(' (MF)', '', regex=False)
+attributed_prg.loc[:,'Channel'] = attributed_prg['Channel'].str.replace('_MF', '', regex=False)
+
+attributed_prg = attributed_prg.merge(categories, how='left', left_on='Channel', right_on='MW_Name')
+
+# check for missing
+missing = list(attributed_prg.loc[attributed_prg['Category1'].isna(),'Channel'].unique())
+if len(missing) == 0:
+    pass
+else:
+    print('There are channels missing in the excel file:')
+    [print(i) for i in missing]    
 
 
-new_prg_df = dim_temp.groupby(['Target', 'Region', 'Channel', 'Description','Date_val','Start_time_str'])['Rat#'].mean()
-new_prg_df = new_prg_df.reset_index().sort_values('Start_time_str')
-new_prg_df = new_prg_df.reset_index(drop=True)
+attributed_prg = attributed_prg.loc[attributed_prg['Category1']!='Children']
+
+prg_ranking_features = ['Target','Region','Description','Date_val','Start_time_str']
+attributed_prg['Rank_Rat#'] = attributed_prg.groupby(prg_ranking_features)['Rat#'].rank(ascending=False,method='first')
+
+keepers = ['Target',
+           'Region',
+           'Channel',
+           'Description',
+           'Date_val',
+           'Start_time_str',
+           'Rat#',
+           'Rank_Rat#']
+           
+cinemax_attributed_prg = attributed_prg.loc[attributed_prg['Channel']=='Cinemax',keepers]
 
 print('Total time:',str(round((time.time() - start_time),4)),'seconds')
+
+# test
+cinemax_attributed_prg.loc[(cinemax_attributed_prg['Region']=='Mexico')&
+                           (cinemax_attributed_prg['Target']=='P18-49'),:].head(25)
+
+#%% Optional: Create the dynamic ranker
+
+#%% Compile the benchmarks
+
+from datetime import timedelta
+
+date_sets = []
+for i in date_val:
+    week1 = i - timedelta(days=-7)
+    week2 = week1 - timedelta(days=-7)
+    week3 = week2 - timedelta(days=-7)
+    week4 = week3 - timedelta(days=-7)
+    week5 = week4 - timedelta(days=-7)
+    date_sets.append([week1,week2,week3,week4,week5])
+    
+
+
+
+
+
+
