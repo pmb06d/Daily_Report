@@ -21,7 +21,10 @@ from tqdm import tqdm
 from os import listdir
 from os.path import isfile, join
 
-mypath = '//svrgsursp5/FTP/DOMO/Daily Reports/Week 38'
+
+current_week_number = 38
+current_week = 'Week '+str(current_week_number)
+mypath = '//svrgsursp5/FTP/DOMO/Daily Reports/'+current_week+'/Raw'
 
 # separates the file names and puts them in a list
 onlyfiles = [f for f in listdir(mypath) if isfile(join(mypath, f))]
@@ -178,6 +181,9 @@ def print_unique_count(df):
     for i in list(df):
         print(i+':',len(df[i].unique()))
         
+def clean_with_dict(date,date_dict=date_dict):
+    return(date_dict[date])
+    
 
 #%%  Parse the files to see how to process each one
         
@@ -186,7 +192,8 @@ file_list_clean = file_list.str.replace('.txt','', regex=False).str.replace('DR 
 
 region, analysis = [], []
 
-for i in list(file_list_clean):
+print('\n','Reading in the data:')
+for i in tqdm(list(file_list_clean)):
     temp_list = i.split(' - ')
     region.append(temp_list[0].strip())
     analysis.append(temp_list[1].strip())
@@ -196,22 +203,40 @@ files_df = pd.DataFrame(zip(file_list,region,analysis), columns = ['Filename','C
 channel_rankers = files_df.loc[files_df['Analysis'].str.startswith('Channel'),['Country','Filename']]
 min_by_min = files_df.loc[~(files_df['Analysis'].str.startswith('Channel')),['Country','Filename']]      
 
+#%% Check if the csv exists already in the folder and if the dates match
+    
+file_check = [f for f in listdir(mypath.replace('/Raw','')) if isfile(join(mypath.replace('/Raw',''), f))]
+
+if 'Processed Channel Rankers.csv' in file_check:
+    print('yes')
+    avail_dates = pd.read_csv(mypath.replace('Raw','')+'Processed Channel Rankers.csv',usecols = ['Date'])
+    avail_dates = list(avail_dates['Date'].unique())
+else:
+    print('no')
+
 
 #%%  Compile the channel rankers and add the ranking variable
     
-start_time = time.time()
+#start_time = time.time()
 
-directory = mypath+'/'
+def compile_rankers(file_path):
+    
+    directory = file_path+'/'
+    
+    df_list = []
+    
+    print('\n','Compiling channel rankers:')
+    for filename, country in tqdm(zip(channel_rankers['Filename'], channel_rankers['Country'])):
+        temp_df = pd.read_csv(directory+filename,sep=';',skiprows=skipper(directory+filename),encoding='latin-1')
+        temp_df['Region'] = country
+        df_list.append(preproc_ranker(temp_df, export_ranking_features=False, convert_date=True))
+    
+    # stack all the data frames
+    channel_rankers_df = pd.concat(df_list, ignore_index=True, sort=False)
+    return(channel_rankers_df)
+    
+channel_rankers_df = compile_rankers(mypath)
 
-df_list = []
-
-for filename, country in zip(channel_rankers['Filename'], channel_rankers['Country']):
-    temp_df = pd.read_csv(directory+filename,sep=';',skiprows=skipper(directory+filename),encoding='latin-1')
-    temp_df['Region'] = country
-    df_list.append(preproc_ranker(temp_df, export_ranking_features=False, convert_date=True))
-
-# stack all the data frames
-channel_rankers_df = pd.concat(df_list, ignore_index=True, sort=False)
 ranking_features, channel_rankers_preproc = preproc_ranker(channel_rankers_df)
 
 # add the channel categories
@@ -237,8 +262,14 @@ channel_rankers_preproc = channel_rankers_preproc.loc[~(channel_rankers_preproc[
 channel_rankers_preproc['Rank_Rat%'] = channel_rankers_preproc.groupby(ranking_features)['Rat%'].rank(ascending=False,method='first')
 
 channel_rankers_preproc.loc[:,'Target'] = channel_rankers_preproc['Target'].apply(target_normalizer)
+
+
+cr_output = mypath.replace('/Raw','')+'/Processed Channel Rankers.csv'
+channel_rankers_preproc.to_csv(path_or_buf=cr_output, sep=',', index=False)
         
-print('Total time:',str(round((time.time() - start_time),4)),'seconds')
+#print('Total time:',str(round((time.time() - start_time),4)),'seconds')
+
+
 
 
 #%% Bring in the PRG files
@@ -250,7 +281,7 @@ def extract_zip(input_zip):
     return {name: input_zip.read(name) for name in input_zip.namelist()}
 
 directory = 'R:/Networks Research - PRG Files/2019'
-file = 'WEEK 38'
+file = current_week.upper()
 filename = directory+'/'+file+'.zip'
 
 prg_dict = extract_zip(filename)
@@ -376,6 +407,7 @@ def parse_prg_txt(file):
 
 list_of_df = []
 
+print('\n','Parsing PRG files:')
 for region, prg_file in zip(list_of_regions,list_of_files):
     parsed_file = parse_prg_txt(prg_file)
     parsed_file['Region'] = region
@@ -388,11 +420,11 @@ prg_df['Insertion'] = prg_df['Description'] +'__'+ prg_df['Date_REF'].map(str) +
 #%% Extrapolate the 5 min file to 1 minute
 
 from dateutil import parser
-start_time = time.time()
 
 # compile all the files
 temp_list = []
 
+print('\n','Compiling the min-by-min text files:')
 for row in tqdm(range(len(min_by_min))):
     filename = min_by_min.iloc[row,1]
     country = min_by_min.iloc[row,0]
@@ -403,8 +435,6 @@ for row in tqdm(range(len(min_by_min))):
     temp_list.append(df)
 
 min_by_min_df = pd.concat(temp_list, sort = False)
-    
-print('Total time:',str(round((time.time() - start_time),4)),'seconds')
 
 # clean up the dataset
 
@@ -414,9 +444,7 @@ date_val = [parser.parse(date) for date in str_dates]
 date_dict = pd.DataFrame(list(zip(str_dates,date_val)))
 date_dict = date_dict.set_index(0).to_dict()[1]
 
-def clean_with_dict(date,date_dict=date_dict):
-    return(date_dict[date])
-
+print('\n','Converting dates:')
 tqdm.pandas()
 min_by_min_df['Date_val'] = min_by_min_df['Date'].progress_apply(clean_with_dict)
 
@@ -425,6 +453,8 @@ target_list = list(min_by_min_df.loc[:,'Target'].unique())
 target_normalizer(target_list)
 
 min_by_min_df.loc[:,'Start Time'] = min_by_min_df['Start Time'].str.replace('\:00$','',regex=True)
+
+print('\n','Normalizing targets:')
 min_by_min_df.loc[:,'Target'] = min_by_min_df['Target'].progress_apply(target_normalizer)
 min_by_min_df.loc[:,'Target'] = min_by_min_df['Target'].str.replace('Personas TV Suscripcion','Pay Universe')
 
@@ -444,10 +474,10 @@ extrapolator.columns = ['TimeBand - 1 minute(s)','Start Time','Start Time_5mins'
 extrapolator.loc[:,'Start Time_5mins'] = replicate_down(list(extrapolator['Start Time_5mins']))
 
 
-min_by_min_df.loc[(min_by_min_df['Target']=='P18-49')&
-                  (min_by_min_df['Date']=='Mon Sep 16, 2019')&
-                  (min_by_min_df['Channel']=='Cinemax')&
-                  (min_by_min_df['Region']=='Argentina'),['Target','Channel','Date_val','Start Time','Rat#']].to_clipboard()
+#min_by_min_df.loc[(min_by_min_df['Target']=='P18-49')&
+#                  (min_by_min_df['Date']=='Mon Sep 16, 2019')&
+#                  (min_by_min_df['Channel']=='Cinemax')&
+#                  (min_by_min_df['Region']=='Argentina'),['Target','Channel','Date_val','Start Time','Rat#']].to_clipboard()
 
 #%% Compile a dataframe with all the dimensions we need to average rating by
 
@@ -526,21 +556,33 @@ def prg_rating(region,target,channel,date):
 
 # test it out
     
-r = dimensions.iloc[0,0]
-t = dimensions.iloc[0,1]
-c = dimensions.iloc[0,2]
-d = dimensions.iloc[0,4]
+#r = dimensions.iloc[0,0]
+#t = dimensions.iloc[0,1]
+#c = dimensions.iloc[0,2]
+#d = dimensions.iloc[0,4]
 
-start_time = time.time()
-prg_rating(r,t,c,d)
-print('Total time:',str(round((time.time() - start_time),4)),'seconds')
+#start_time = time.time()
+#prg_rating(r,t,c,d)
+#print('Total time:',str(round((time.time() - start_time),4)),'seconds')
+
+
+#%% Check if the csv exists already in the folder and if the dates match
+    
+file_check = [f for f in listdir(mypath.replace('/Raw','')) if isfile(join(mypath.replace('/Raw',''), f))]
+
+if 'Processed PRG files.csv' in file_check:
+    print('yes')
+else:
+    print('no')
+  
 
 #%% Loop and get every channel's rating for our prg channel Cinemax
 
 df_stack = []
 
-start_time = time.time()
+#start_time = time.time()
 
+print('\n','Matching PRG timebands and ratings:')
 for i in tqdm(range(len(loop_dims))):
     r = loop_dims.iloc[i,3]
     t = loop_dims.iloc[i,1]
@@ -548,13 +590,14 @@ for i in tqdm(range(len(loop_dims))):
     d = loop_dims.iloc[i,2]
     df_stack.append(prg_rating(r,t,c,d))
     
-print('Total time:',str(round((time.time() - start_time),4)),'seconds')
+#print('Total time:',str(round((time.time() - start_time),4)),'seconds')
 
-# stack and clean
+#%% stack and clean
 
-start_time = time.time()
+#start_time = time.time()
 
 attributed_prg = pd.concat(df_stack)
+attributed_prg.loc[:,'Channel'] = attributed_prg.loc[attributed_prg['Channel'].notna(),]
 attributed_prg.loc[:,'Channel'] = attributed_prg['Channel'].str.replace(' (MF)', '', regex=False)
 attributed_prg.loc[:,'Channel'] = attributed_prg['Channel'].str.replace('_MF', '', regex=False)
 
@@ -585,11 +628,16 @@ keepers = ['Target',
            
 cinemax_attributed_prg = attributed_prg.loc[attributed_prg['Channel']=='Cinemax',keepers]
 
-print('Total time:',str(round((time.time() - start_time),4)),'seconds')
+prg_output = mypath.replace('/Raw','')+'/Processed PRG files.csv'
+cinemax_attributed_prg.to_csv(path_or_buf=prg_output, sep=',', index=False)
+
+
+
+#print('Total time:',str(round((time.time() - start_time),4)),'seconds')
 
 # test
-cinemax_attributed_prg.loc[(cinemax_attributed_prg['Region']=='Mexico')&
-                           (cinemax_attributed_prg['Target']=='P18-49'),:].head(25)
+#cinemax_attributed_prg.loc[(cinemax_attributed_prg['Region']=='Mexico')&
+#                           (cinemax_attributed_prg['Target']=='P18-49'),:].head(25)
 
 #%% Optional: Create the dynamic ranker
 
@@ -599,11 +647,11 @@ from datetime import timedelta
 
 date_sets = []
 for i in date_val:
-    week1 = i - timedelta(days=-7)
-    week2 = week1 - timedelta(days=-7)
-    week3 = week2 - timedelta(days=-7)
-    week4 = week3 - timedelta(days=-7)
-    week5 = week4 - timedelta(days=-7)
+    week1 = i - timedelta(days=7)
+    week2 = week1 - timedelta(days=7)
+    week3 = week2 - timedelta(days=7)
+    week4 = week3 - timedelta(days=7)
+    week5 = week4 - timedelta(days=7)
     date_sets.append([week1,week2,week3,week4,week5])
     
 
