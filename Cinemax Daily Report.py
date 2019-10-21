@@ -180,10 +180,49 @@ def replicate_down(raw_list):
 def print_unique_count(df):
     for i in list(df):
         print(i+':',len(df[i].unique()))
-        
-def clean_with_dict(date,date_dict=date_dict):
-    return(date_dict[date])
     
+
+def compile_rankers(file_path):
+    
+    directory = file_path+'/'
+    
+    df_list = []
+    
+    print('\n','Compiling channel rankers:')
+    for filename, country in tqdm(zip(channel_rankers['Filename'], channel_rankers['Country'])):
+        temp_df = pd.read_csv(directory+filename,sep=';',skiprows=skipper(directory+filename),encoding='latin-1')
+        temp_df['Region'] = country
+        df_list.append(preproc_ranker(temp_df, export_ranking_features=False, convert_date=True))
+    
+    # stack all the data frames
+    channel_rankers_df = pd.concat(df_list, ignore_index=True, sort=False)
+    return(channel_rankers_df)
+
+
+def process_ranker(ranker_df):
+    ranking_features, channel_rankers_preproc = preproc_ranker(ranker_df)
+    
+    # add the channel categories
+    categories = pd.read_excel('//svrgsursp5/FTP/DOMO/Daily Reports/IBOPE Channel Reference.xlsx')
+    channel_rankers_preproc = channel_rankers_preproc.merge(categories, how='left', left_on='Channel', right_on='MW_Name')
+
+    # check for missing
+    missing = list(channel_rankers_preproc.loc[channel_rankers_preproc['Category1'].isna(),'Channel'].unique())
+    if len(missing) == 0:
+        pass
+    else:
+        print('There are channels missing in the excel file:')
+        [print(i) for i in missing]    
+        
+    exclude = ['Children','Virtual']
+    
+    channel_rankers_preproc = channel_rankers_preproc.loc[~(channel_rankers_preproc['Category1'].isin(exclude)),:]
+    
+    channel_rankers_preproc['Rank_Rat%'] = channel_rankers_preproc.groupby(ranking_features)['Rat%'].rank(ascending=False,method='first')
+    
+    channel_rankers_preproc.loc[:,'Target'] = channel_rankers_preproc['Target'].apply(target_normalizer)
+    
+    return(channel_rankers_preproc)
 
 #%%  Parse the files to see how to process each one
         
@@ -203,74 +242,39 @@ files_df = pd.DataFrame(zip(file_list,region,analysis), columns = ['Filename','C
 channel_rankers = files_df.loc[files_df['Analysis'].str.startswith('Channel'),['Country','Filename']]
 min_by_min = files_df.loc[~(files_df['Analysis'].str.startswith('Channel')),['Country','Filename']]      
 
-#%% Check if the csv exists already in the folder and if the dates match
+#%% Check if the csv exists already in the folder and if there are 7 dates
+
+# Compile the channel rankers and add the ranking variable if not
     
 file_check = [f for f in listdir(mypath.replace('/Raw','')) if isfile(join(mypath.replace('/Raw',''), f))]
 
 if 'Processed Channel Rankers.csv' in file_check:
-    print('yes')
     avail_dates = pd.read_csv(mypath.replace('Raw','')+'Processed Channel Rankers.csv',usecols = ['Date'])
     avail_dates = list(avail_dates['Date'].unique())
+    
+    if len(avail_dates) == 7:
+        print('Channel rankers already complete for this week')
+    else:
+        channel_rankers_df = compile_rankers(mypath)
+        channel_rankers = process_ranker(channel_rankers_df)
+        cr_output = mypath.replace('/Raw','')+'/Processed Channel Rankers.csv'
+        channel_rankers.to_csv(path_or_buf=cr_output, sep=',', index=False)
+else:
+    channel_rankers_df = compile_rankers(mypath)
+    channel_rankers = process_ranker(channel_rankers_df)
+    cr_output = mypath.replace('/Raw','')+'/Processed Channel Rankers.csv'
+    channel_rankers.to_csv(path_or_buf=cr_output, sep=',', index=False)
+
+
+#%% Check if the attributed prg csv exists already in the folder and if the dates match
+    
+file_check = [f for f in listdir(mypath.replace('/Raw','')) if isfile(join(mypath.replace('/Raw',''), f))]
+
+if 'Processed PRG files.csv' in file_check:
+    print('yes')
 else:
     print('no')
-
-
-#%%  Compile the channel rankers and add the ranking variable
-    
-#start_time = time.time()
-
-def compile_rankers(file_path):
-    
-    directory = file_path+'/'
-    
-    df_list = []
-    
-    print('\n','Compiling channel rankers:')
-    for filename, country in tqdm(zip(channel_rankers['Filename'], channel_rankers['Country'])):
-        temp_df = pd.read_csv(directory+filename,sep=';',skiprows=skipper(directory+filename),encoding='latin-1')
-        temp_df['Region'] = country
-        df_list.append(preproc_ranker(temp_df, export_ranking_features=False, convert_date=True))
-    
-    # stack all the data frames
-    channel_rankers_df = pd.concat(df_list, ignore_index=True, sort=False)
-    return(channel_rankers_df)
-    
-channel_rankers_df = compile_rankers(mypath)
-
-ranking_features, channel_rankers_preproc = preproc_ranker(channel_rankers_df)
-
-# add the channel categories
-categories = pd.read_excel('//svrgsursp5/FTP/DOMO/Daily Reports/IBOPE Channel Reference.xlsx')
-channel_rankers_preproc = channel_rankers_preproc.merge(categories, how='left', left_on='Channel', right_on='MW_Name')
-
-# check for missing
-missing = list(channel_rankers_preproc.loc[channel_rankers_preproc['Category1'].isna(),'Channel'].unique())
-if len(missing) == 0:
-    pass
-else:
-    print('There are channels missing in the excel file:')
-    [print(i) for i in missing]    
-
-#import clipboard
-#clipboard.copy(str(list(channel_rankers_full.loc[channel_rankers_full['Category1'].isna(),'Channel'].unique())))
-
-exclude = ['Children','Virtual']
-
-channel_rankers_preproc = channel_rankers_preproc.loc[~(channel_rankers_preproc['Category1'].isin(exclude)),:]
-
-
-channel_rankers_preproc['Rank_Rat%'] = channel_rankers_preproc.groupby(ranking_features)['Rat%'].rank(ascending=False,method='first')
-
-channel_rankers_preproc.loc[:,'Target'] = channel_rankers_preproc['Target'].apply(target_normalizer)
-
-
-cr_output = mypath.replace('/Raw','')+'/Processed Channel Rankers.csv'
-channel_rankers_preproc.to_csv(path_or_buf=cr_output, sep=',', index=False)
-        
-#print('Total time:',str(round((time.time() - start_time),4)),'seconds')
-
-
-
+  
 
 #%% Bring in the PRG files
 
@@ -440,13 +444,27 @@ min_by_min_df = pd.concat(temp_list, sort = False)
 
 #the dates
 str_dates = list(min_by_min_df['Date'].unique())
-date_val = [parser.parse(date) for date in str_dates]
-date_dict = pd.DataFrame(list(zip(str_dates,date_val)))
-date_dict = date_dict.set_index(0).to_dict()[1]
+#date_val = [parser.parse(date) for date in str_dates]
+#date_dict = pd.DataFrame(list(zip(str_dates,date_val)))
+#date_dict = date_dict.set_index(0).to_dict()[1]
+
+def create_date_dict(date_list):
+    # Make sure the passed date list has unique dates
+    date_val = [parser.parse(date) for date in date_list]
+    date_dict = pd.DataFrame(list(zip(date_list,date_val)))
+    date_dict = date_dict.set_index(0).to_dict()[1]
+    return(date_dict)
+
+#def clean_with_dict(date,date_dict=date_dict):
+#    # In order to vectorize this function, make sure you create an object called 
+#    return(date_dict[date])
+
+date_dict = create_date_dict(str_dates)
+
 
 print('\n','Converting dates:')
 tqdm.pandas()
-min_by_min_df['Date_val'] = min_by_min_df['Date'].progress_apply(clean_with_dict)
+min_by_min_df['Date_val'] = min_by_min_df['Date'].progress_apply(lambda x: date_dict[x])
 
 # the targets
 target_list = list(min_by_min_df.loc[:,'Target'].unique())
@@ -565,16 +583,6 @@ def prg_rating(region,target,channel,date):
 #prg_rating(r,t,c,d)
 #print('Total time:',str(round((time.time() - start_time),4)),'seconds')
 
-
-#%% Check if the csv exists already in the folder and if the dates match
-    
-file_check = [f for f in listdir(mypath.replace('/Raw','')) if isfile(join(mypath.replace('/Raw',''), f))]
-
-if 'Processed PRG files.csv' in file_check:
-    print('yes')
-else:
-    print('no')
-  
 
 #%% Loop and get every channel's rating for our prg channel Cinemax
 
