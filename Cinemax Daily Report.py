@@ -23,18 +23,88 @@ from os.path import isfile, join
 
 from dateutil import parser
 
-current_week_number = 38
-current_week = 'Week '+str(current_week_number)
-mypath = '//svrgsursp5/FTP/DOMO/Daily Reports/'+current_week+'/Raw'
+#current_week_number = 38
+#current_week = 'Week '+str(current_week_number)
+#mypath = '//svrgsursp5/FTP/DOMO/Daily Reports/2019/'+current_week+'/Raw'
 
 # separates the file names and puts them in a list
-onlyfiles = [f for f in listdir(mypath) if isfile(join(mypath, f))]
+# 
 
 # Pandas option to display up to 20 columns
-pd.options.display.max_columns = 20
-pd.options.display.max_rows = 100
+#pd.options.display.max_columns = 20
+#pd.options.display.max_rows = 100
+
 
 #%% Function compilation
+
+def auto_filename():
+    import datetime
+    today = datetime.date.today()
+    lastWeek = today - datetime.timedelta(days=7)
+    lastWeek = lastWeek.isocalendar()[1]
+    return(lastWeek)
+ 
+
+def get_filename(): 
+    while True:
+        week = input('\n'+'Enter the week number in '+str(time.strftime("%Y"))+' for the report you want to run (e.g. 35):')
+        try:
+            if int(week) <= 53 and int(week) >= 1:
+                return(week.title())
+                break
+            elif week == 'quit':
+                break
+            else:
+                print('\n','Invalid entry',sep='')
+            
+        except:
+            print('\n','Invalid entry',sep='')
+
+
+def confirm_filename():
+    while True:
+        input_statement = 'Please confirm Week '+str(auto_filename())+', '+str(time.strftime("%Y"))+' is the correct report (Y/N):'
+        get = input(input_statement)
+        if get.upper() == 'Y':
+            get = 'Week '+str(auto_filename())
+            break
+        elif get.upper() == 'N':
+            while True:
+                get = 'Week '+get_filename()
+                break
+            break
+        else:
+            print('Please enter only Y or N')
+            continue
+    return(get.title())
+
+
+def get_mypath():
+    current_week = confirm_filename()
+    mypath = '//svrgsursp5/FTP/DOMO/Daily Reports/2019/'+current_week+'/Raw'
+    return current_week, mypath
+
+def data_reader():
+    # Parse the files to see how to process each one
+    onlyfiles = [f for f in listdir(mypath) if isfile(join(mypath, f))]
+    file_list = pd.Series(onlyfiles)
+    file_list_clean = file_list.str.replace('.txt','', regex=False).str.replace('DR - ','', regex=False)
+    
+    region, analysis = [], []
+    
+    print('\n','Reading in the data:')
+    for i in tqdm(list(file_list_clean)):
+        temp_list = i.split(' - ')
+        region.append(temp_list[0].strip())
+        analysis.append(temp_list[1].strip())
+        
+    files_df = pd.DataFrame(zip(file_list,region,analysis), columns = ['Filename','Country','Analysis'])
+        
+    channel_rankers = files_df.loc[files_df['Analysis'].str.startswith('Channel'),['Country','Filename']]
+    min_by_min = files_df.loc[~(files_df['Analysis'].str.startswith('Channel')),['Country','Filename']]
+    
+    return channel_rankers, min_by_min
+
 
 # Skipper function for IBOPE MW output
 def skipper(file):
@@ -594,28 +664,18 @@ def CER_prg(attributed_prg):
     cinemax_attributed_prg = attributed_prg.loc[attributed_prg['Channel']=='Cinemax',keepers]
     return(cinemax_attributed_prg)
 
-#%%  Parse the files to see how to process each one
-        
-file_list = pd.Series(onlyfiles)
-file_list_clean = file_list.str.replace('.txt','', regex=False).str.replace('DR - ','', regex=False)
 
-region, analysis = [], []
+#%% the Main
 
-print('\n','Reading in the data:')
-for i in tqdm(list(file_list_clean)):
-    temp_list = i.split(' - ')
-    region.append(temp_list[0].strip())
-    analysis.append(temp_list[1].strip())
+# Get the data
     
-files_df = pd.DataFrame(zip(file_list,region,analysis), columns = ['Filename','Country','Analysis'])
-    
-channel_rankers = files_df.loc[files_df['Analysis'].str.startswith('Channel'),['Country','Filename']]
-min_by_min = files_df.loc[~(files_df['Analysis'].str.startswith('Channel')),['Country','Filename']]      
+current_week, mypath = get_mypath()
+
+channel_rankers, min_by_min = data_reader()
 
 
-#%% Check if the csv exists already in the folder and if there are 7 dates
-
-# Compile the channel rankers and add the ranking variable if not
+# Check if the csv exists already in the folder and if there are 7 dates
+# compile the channel rankers and add the ranking variable if not
     
 file_check = [f for f in listdir(mypath.replace('/Raw','')) if isfile(join(mypath.replace('/Raw',''), f))]
 
@@ -640,14 +700,8 @@ else:
 #%% Check if the attributed prg csv exists already in the folder and if the dates match
     
 if 'Processed PRG files.csv' in file_check:
-    print('yes')
-else:
-    print('no')
-
-
-if 'Processed PRG files.csv' in file_check:
-    avail_dates = pd.read_csv(mypath.replace('Raw','')+'Processed PRG files.csv',usecols = ['Date'])
-    avail_dates = list(avail_dates['Date'].unique())
+    avail_dates = pd.read_csv(mypath.replace('Raw','')+'Processed PRG files.csv',usecols = ['Date_val'])
+    avail_dates = list(avail_dates['Date_val'].unique())
     
     if len(avail_dates) == 7:
         print('PRG and min-by-min data is already complete for this week')
@@ -691,6 +745,7 @@ else:
 #%% Compile the benchmarks
 
 from datetime import timedelta
+
 
 date_sets = []
 for i in date_val:
