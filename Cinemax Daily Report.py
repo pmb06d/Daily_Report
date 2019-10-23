@@ -5,23 +5,19 @@ Created on Thu Sep 26 16:22:03 2019
 @author: pbonnin
 """
 
-import pandas as pd
-import time
-import tkinter
-from tkinter import filedialog
-import re
+#import pandas as pd
+#import time
+#import re
 
 # Progress bars!
-from tqdm import tqdm
+#from tqdm import tqdm
 
 # To see the current directory
 # print(os.getcwd())
 
 # Get all the files in the directory
-from os import listdir
-from os.path import isfile, join
-
-from dateutil import parser
+#from os import listdir
+#from os.path import isfile, join
 
 #current_week_number = 38
 #current_week = 'Week '+str(current_week_number)
@@ -37,6 +33,8 @@ from dateutil import parser
 
 #%% Function compilation
 
+
+# gets the previous week number for the autoname functions
 def auto_filename():
     import datetime
     today = datetime.date.today()
@@ -45,7 +43,10 @@ def auto_filename():
     return(lastWeek)
  
 
+# gets an input between 1 and 53 to assign as the week number for the file
 def get_filename(): 
+    import time
+    
     while True:
         week = input('\n'+'Enter the week number in '+str(time.strftime("%Y"))+' for the report you want to run (e.g. 35):')
         try:
@@ -61,7 +62,10 @@ def get_filename():
             print('\n','Invalid entry',sep='')
 
 
+# confirms the auto week with the user
 def confirm_filename():
+    import time
+    
     while True:
         input_statement = 'Please confirm Week '+str(auto_filename())+', '+str(time.strftime("%Y"))+' is the correct report (Y/N):'
         get = input(input_statement)
@@ -79,12 +83,20 @@ def confirm_filename():
     return(get.title())
 
 
-def get_mypath():
+# Gets the path to the folder where the files are hosted
+def get_mypath():    
     current_week = confirm_filename()
     mypath = '//svrgsursp5/FTP/DOMO/Daily Reports/2019/'+current_week+'/Raw'
     return current_week, mypath
 
-def data_reader():
+
+# Reads in all the text files and compiles them into two dataframes
+def data_reader(mypath):
+    from os import listdir
+    from os.path import isfile, join
+    import pandas as pd
+    from tqdm import tqdm
+    
     # Parse the files to see how to process each one
     onlyfiles = [f for f in listdir(mypath) if isfile(join(mypath, f))]
     file_list = pd.Series(onlyfiles)
@@ -120,6 +132,9 @@ def skipper(file):
 
 # GUI pop-up to select a path     
 def get_filepath():
+    import tkinter
+    from tkinter import filedialog
+    
     root = tkinter.Tk()
     root.withdraw()
     return(filedialog.askopenfilename())
@@ -127,7 +142,8 @@ def get_filepath():
 
 # Clean numeric IBOPE variable columns
 def clean_features(test_list, cleaned_features=False):
-
+    import re
+    
     temp = []
     temp2 = []
   
@@ -200,7 +216,8 @@ def preproc_ranker(a_dataframe, export_ranking_features=True, convert_date=True)
 
 # Target standarizer
 def target_normalizer(target_list):
-    
+    import re
+        
     age_regex = re.compile('[PWM][0-9\-\+]+.+')
     age_regex2 = re.compile('\w+\s*\-*Universe+')
     
@@ -261,7 +278,9 @@ def print_unique_count(df):
     
 
 # Compiles all the channel ranker csv's
-def compile_rankers(file_path):
+def compile_rankers(file_path, channel_rankers):
+    import pandas as pd
+    from tqdm import tqdm
     
     directory = file_path+'/'
     
@@ -280,6 +299,7 @@ def compile_rankers(file_path):
 
 # Pre-process and add a ranking variable
 def process_ranker(ranker_df):
+    import pandas as pd
     ranking_features, channel_rankers_preproc = preproc_ranker(ranker_df)
     
     # add the channel categories
@@ -314,7 +334,11 @@ def extract_zip(input_zip):
 
 
 # Gets the PRG text files from the zip folders
-def get_prg_files(current_week):
+def get_prg_files(current_week, min_by_min):
+    import pandas as pd
+    import re
+    import time
+    
     directory = 'R:/Networks Research - PRG Files/'+str(time.strftime("%Y"))
     file = current_week.upper()
     filename = directory+'/'+file+'.zip'
@@ -340,10 +364,13 @@ def get_prg_files(current_week):
         
     return list_of_regions, list_of_files
 
+
 # Parses the PRG files
-def parse_prg_txt(file):    
+def parse_prg_txt(file):
+    import pandas as pd
     from dateutil import parser
     from datetime import timedelta
+    import re
     
     numbers = re.compile('(?=\w+\s)[0-9]+')
     title = re.compile('(^\w+\s[0-9\s]+)([\w\,\sÀ-ÿ:\-\#\/]+)(?<!\=\=)')
@@ -443,6 +470,9 @@ def parse_prg_txt(file):
 
 # Using this dict method speeds up pandas pd.to_datetime significantly
 def create_date_dict(date_list):
+    import pandas as pd
+    from dateutil import parser
+    
     # Make sure the passed date list has unique dates
     date_val = [parser.parse(date) for date in date_list]
     date_dict = pd.DataFrame(list(zip(date_list,date_val)))
@@ -452,6 +482,8 @@ def create_date_dict(date_list):
 
 # Applies the PRG parser to all the PRG files
 def parse_all_prg_files(regions, files):
+    import pandas as pd
+    from tqdm import tqdm
     
     list_of_regions = regions
     list_of_files = files
@@ -471,7 +503,10 @@ def parse_all_prg_files(regions, files):
     return(prg_df)
 
 # Compiles all the min-by-min text files and returns them in a dataframe
-def compile_minute_df(minute_df):
+def compile_minute_df(mypath, min_by_min):
+    import pandas as pd
+    from tqdm import tqdm
+    
     temp_list = []
     
     print('\n','Compiling the min-by-min text files:')
@@ -512,6 +547,8 @@ def compile_minute_df(minute_df):
 
 # Maps the 5 minute intervals to 1 minute intervals
 def get_extrapolator(minute_df):
+    import pandas as pd
+    
     # read in the single minute reference
     ref = '//svrgsursp5/FTP/DOMO/Daily Reports/one_min_ref.csv'
     minute1 = pd.read_csv(ref)
@@ -530,7 +567,8 @@ def get_extrapolator(minute_df):
 
 
 # Compiles a dataframe with all the dimensions we need to average rating by PRG
-def get_dimensions():
+def get_dimensions(min_by_min_df, prg_df):
+    import pandas as pd
     import itertools
     
     regional_list = []
@@ -566,7 +604,7 @@ def get_dimensions():
 
 
 # Combines the parsed PRG files with the min-by-min dataset through the extrapolator
-def prg_rating(region,target,channel,date):
+def prg_rating(region,target,channel,date, data, dimensions, extrapolator):
     
     # This function uses the following datasets:
     ## min_by_min_df <-- holds all the ratings information at a 5 min level
@@ -574,10 +612,11 @@ def prg_rating(region,target,channel,date):
     ## dimensions <-- holds all the "timebands" (aka programs)
     
     # e.g. This would be a dataframe for Argentina, P18-49, Cinemax, 9/16/2019
-    temp = min_by_min_df.loc[(min_by_min_df['Region']==region)&
-                             (min_by_min_df['Target']==target)&
-                             (min_by_min_df['Channel']==channel)&
-                             (min_by_min_df['Date_val']==date),:]
+    temp = data.loc[(data['Region']==region)&
+                    (data['Target']==target)&
+                    (data['Channel']==channel)&
+                    (data['Date_val']==date),:]
+    
     temp = temp.sort_values('Start Time')
     
     # combine with the extrapolator to go from 5 to 1 minute detail
@@ -608,7 +647,10 @@ def prg_rating(region,target,channel,date):
 
 
 # Loop and get every channel's rating for our prg channel Cinemax using the PRG rating function
-def prg_attribution():
+def prg_attribution(loop_dims, data, dimensions, extrapolator):
+    from tqdm import tqdm
+    import pandas as pd
+    
     df_stack = []
     
     print('\n','Matching PRG timebands and ratings:')
@@ -617,7 +659,7 @@ def prg_attribution():
         t = loop_dims.iloc[i,1]
         c = loop_dims.iloc[i,0]
         d = loop_dims.iloc[i,2]
-        df_stack.append(prg_rating(r,t,c,d))
+        df_stack.append(prg_rating(r,t,c,d,data,dimensions, extrapolator))
     
     attributed_prg = pd.concat(df_stack)
     
@@ -626,6 +668,8 @@ def prg_attribution():
 
 # Cleans the attributed PRG file stack
 def CER_prg(attributed_prg):
+    import pandas as pd
+    
     # CER --> Clean Enhance Rank
     attributed_prg = attributed_prg
     
@@ -665,81 +709,91 @@ def CER_prg(attributed_prg):
     return(cinemax_attributed_prg)
 
 
-#%% the Main
-
+def main():
+    from os import listdir
+    from os.path import isfile, join
+    import pandas as pd
+    import time
+    
 # Get the data
+    start_time = time.time()
     
-current_week, mypath = get_mypath()
-
-channel_rankers, min_by_min = data_reader()
-
-
-# Check if the csv exists already in the folder and if there are 7 dates
-# compile the channel rankers and add the ranking variable if not
+    current_week, mypath = get_mypath()
     
-file_check = [f for f in listdir(mypath.replace('/Raw','')) if isfile(join(mypath.replace('/Raw',''), f))]
-
-if 'Processed Channel Rankers.csv' in file_check:
-    avail_dates = pd.read_csv(mypath.replace('Raw','')+'Processed Channel Rankers.csv',usecols = ['Date'])
-    avail_dates = list(avail_dates['Date'].unique())
+    channel_rankers, min_by_min = data_reader(mypath)
     
-    if len(avail_dates) == 7:
-        print('Channel rankers already complete for this week')
+    
+    # Check if the csv exists already in the folder and if there are 7 dates
+    # compile the channel rankers and add the ranking variable if not
+        
+    file_check = [f for f in listdir(mypath.replace('/Raw','')) if isfile(join(mypath.replace('/Raw',''), f))]
+    
+    if 'Processed Channel Rankers.csv' in file_check:
+        avail_dates = pd.read_csv(mypath.replace('Raw','')+'Processed Channel Rankers.csv',usecols = ['Date'])
+        avail_dates = list(avail_dates['Date'].unique())
+        
+        if len(avail_dates) == 7:
+            print('\n','Channel rankers already complete for this week')
+        else:
+            channel_rankers_df = compile_rankers(mypath, channel_rankers)
+            channel_rankers = process_ranker(channel_rankers_df)
+            cr_output = mypath.replace('/Raw','')+'/Processed Channel Rankers.csv'
+            channel_rankers.to_csv(path_or_buf=cr_output, sep=',', index=False)
     else:
-        channel_rankers_df = compile_rankers(mypath)
+        channel_rankers_df = compile_rankers(mypath, channel_rankers)
         channel_rankers = process_ranker(channel_rankers_df)
         cr_output = mypath.replace('/Raw','')+'/Processed Channel Rankers.csv'
         channel_rankers.to_csv(path_or_buf=cr_output, sep=',', index=False)
-else:
-    channel_rankers_df = compile_rankers(mypath)
-    channel_rankers = process_ranker(channel_rankers_df)
-    cr_output = mypath.replace('/Raw','')+'/Processed Channel Rankers.csv'
-    channel_rankers.to_csv(path_or_buf=cr_output, sep=',', index=False)
-
-
-#%% Check if the attributed prg csv exists already in the folder and if the dates match
     
-if 'Processed PRG files.csv' in file_check:
-    avail_dates = pd.read_csv(mypath.replace('Raw','')+'Processed PRG files.csv',usecols = ['Date_val'])
-    avail_dates = list(avail_dates['Date_val'].unique())
     
-    if len(avail_dates) == 7:
-        print('PRG and min-by-min data is already complete for this week')
+    # Check if the attributed prg csv exists already in the folder and if the dates match
+        
+    if 'Processed PRG files.csv' in file_check:
+        avail_dates = pd.read_csv(mypath.replace('Raw','')+'Processed PRG files.csv',usecols = ['Date_val'])
+        avail_dates = list(avail_dates['Date_val'].unique())
+        
+        if len(avail_dates) == 7:
+            print('\n','PRG and min-by-min data is already complete for this week')
+        else:
+            list_of_regions, list_of_files = get_prg_files(current_week, min_by_min)
+            
+            prg_df = parse_all_prg_files(list_of_regions, list_of_files)
+            
+            min_by_min_df = compile_minute_df(mypath, min_by_min)
+            
+            extrapolator = get_extrapolator(min_by_min_df)
+            
+            dimensions, loop_dims = get_dimensions(min_by_min_df, prg_df)
+            
+            cinemax_attributed_prg = CER_prg(prg_attribution(loop_dims, min_by_min_df, dimensions, extrapolator))
+            
+            prg_output = mypath.replace('/Raw','')+'/Processed PRG files.csv'
+            
+            cinemax_attributed_prg.to_csv(path_or_buf=prg_output, sep=',', index=False)
+    
     else:
-        list_of_regions, list_of_files = get_prg_files(current_week)
+        list_of_regions, list_of_files = get_prg_files(current_week, min_by_min)
         
         prg_df = parse_all_prg_files(list_of_regions, list_of_files)
         
-        min_by_min_df = compile_minute_df(min_by_min)
+        min_by_min_df = compile_minute_df(mypath, min_by_min)
         
         extrapolator = get_extrapolator(min_by_min_df)
         
-        dimensions, loop_dims = get_dimensions()
+        dimensions, loop_dims = get_dimensions(min_by_min_df, prg_df)
         
-        cinemax_attributed_prg = CER_prg(prg_attribution())
+        cinemax_attributed_prg = CER_prg(prg_attribution(loop_dims, min_by_min_df, dimensions, extrapolator))
         
         prg_output = mypath.replace('/Raw','')+'/Processed PRG files.csv'
         
         cinemax_attributed_prg.to_csv(path_or_buf=prg_output, sep=',', index=False)
+        
+    print('\n',"--- %s seconds ---" % (time.time() - start_time))
 
-else:
-    list_of_regions, list_of_files = get_prg_files(current_week)
+#%% Test it out (on week 38) 
     
-    prg_df = parse_all_prg_files(list_of_regions, list_of_files)
+main() 
     
-    min_by_min_df = compile_minute_df(min_by_min)
-    
-    extrapolator = get_extrapolator(min_by_min_df)
-    
-    dimensions, loop_dims = get_dimensions()
-    
-    cinemax_attributed_prg = CER_prg(prg_attribution())
-    
-    prg_output = mypath.replace('/Raw','')+'/Processed PRG files.csv'
-    
-    cinemax_attributed_prg.to_csv(path_or_buf=prg_output, sep=',', index=False)
-
-
 #%% Optional: Create the dynamic ranker
 
 #%% Compile the benchmarks
