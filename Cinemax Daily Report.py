@@ -287,7 +287,7 @@ def compile_rankers(file_path, channel_rankers):
     df_list = []
     
     print('\n','Compiling channel rankers:')
-    for filename, country in tqdm(zip(channel_rankers['Filename'], channel_rankers['Country'])):
+    for filename, country in tqdm(zip(channel_rankers['Filename'], channel_rankers['Country']), total=len(channel_rankers)):
         temp_df = pd.read_csv(directory+filename,sep=';',skiprows=skipper(directory+filename),encoding='latin-1')
         temp_df['Region'] = country
         df_list.append(preproc_ranker(temp_df, export_ranking_features=False, convert_date=True))
@@ -304,6 +304,8 @@ def process_ranker(ranker_df):
     
     # add the channel categories
     categories = pd.read_excel('//svrgsursp5/FTP/DOMO/Daily Reports/IBOPE Channel Reference.xlsx')
+    
+    channel_rankers_preproc.loc[:,'Channel'] = channel_rankers_preproc['Channel'].str.replace('*','',regex=False)
     channel_rankers_preproc = channel_rankers_preproc.merge(categories, how='left', left_on='Channel', right_on='MW_Name')
 
     # check for missing
@@ -491,7 +493,7 @@ def parse_all_prg_files(regions, files):
     list_of_df = []
     
     print('\n','Parsing PRG files:')
-    for region, prg_file in tqdm(zip(list_of_regions,list_of_files)):
+    for region, prg_file in tqdm(zip(list_of_regions,list_of_files), total=len(list_of_regions)):
         parsed_file = parse_prg_txt(prg_file)
         parsed_file['Region'] = region
         list_of_df.append(parsed_file)
@@ -677,6 +679,7 @@ def CER_prg(attributed_prg):
     attributed_prg.loc[:,'Channel'] = attributed_prg.loc[attributed_prg['Channel'].notna(),]
     attributed_prg.loc[:,'Channel'] = attributed_prg['Channel'].str.replace(' (MF)', '', regex=False)
     attributed_prg.loc[:,'Channel'] = attributed_prg['Channel'].str.replace('_MF', '', regex=False)
+    attributed_prg.loc[:,'Channel'] = attributed_prg['Channel'].str.replace('*', '', regex=False)
 
     # Enhance
     categories = pd.read_excel('//svrgsursp5/FTP/DOMO/Daily Reports/IBOPE Channel Reference.xlsx')
