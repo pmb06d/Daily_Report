@@ -33,6 +33,16 @@ Created on Thu Sep 26 16:22:03 2019
 
 #%% Function compilation
 
+# Gets the weeks available for processing in the directory
+def week_check(year):    
+    from os import listdir
+    mypath = '//svrgsursp5/FTP/DOMO/Daily Reports/'+str(year)
+    try:
+        directories = [f for f in listdir(mypath)]
+        return(directories)
+    except:
+        print('Directory for '+str(year)+' does not exist')
+
 
 # gets the previous week number for the autoname functions
 def auto_filename():
@@ -75,7 +85,10 @@ def confirm_filename():
         elif get.upper() == 'N':
             while True:
                 get = 'Week '+get_filename()
-                break
+                if get in week_check(2019):     # the year is hardcoded
+                    break
+                else:
+                    print(get+' does not exist in the directory')
             break
         else:
             print('Please enter only Y or N')
@@ -86,7 +99,7 @@ def confirm_filename():
 # Gets the path to the folder where the files are hosted
 def get_mypath():    
     current_week = confirm_filename()
-    mypath = '//svrgsursp5/FTP/DOMO/Daily Reports/2019/'+current_week+'/Raw'
+    mypath = '//svrgsursp5/FTP/DOMO/Daily Reports/2019/'+current_week+'/Raw'     # the year is hardcoded
     return current_week, mypath
 
 
@@ -104,7 +117,7 @@ def data_reader(mypath):
     
     region, analysis = [], []
     
-    print('\n','Reading in the data:')
+    print('\n','Compiling files for the current week:')
     for i in tqdm(list(file_list_clean)):
         temp_list = i.split(' - ')
         region.append(temp_list[0].strip())
@@ -534,11 +547,11 @@ def compile_minute_df(mypath, min_by_min):
     tqdm.pandas()
     min_by_min_df['Date_val'] = min_by_min_df['Date'].progress_apply(lambda x: date_dict[x])
     
-    # the targets
-    target_list = list(min_by_min_df.loc[:,'Target'].unique())
-    target_normalizer(target_list)
-    
+    # the times
     min_by_min_df.loc[:,'Start Time'] = min_by_min_df['Start Time'].str.replace('\:00$','',regex=True)
+    
+    # the numeric variables
+    min_by_min_df.loc[:,'Rat#'] = to_numeric('Rat#',min_by_min_df)
     
     print('\n','Normalizing targets:')
     min_by_min_df.loc[:,'Target'] = min_by_min_df['Target'].progress_apply(target_normalizer)
@@ -712,6 +725,29 @@ def CER_prg(attributed_prg):
     return(cinemax_attributed_prg)
 
 
+def channel_ranker_ETL(mypath, channel_rankers):
+    channel_rankers_df = compile_rankers(mypath, channel_rankers)
+    channel_rankers = process_ranker(channel_rankers_df)
+    cr_output = mypath.replace('/Raw','')+'/Processed Channel Rankers.csv'
+    channel_rankers.to_csv(path_or_buf=cr_output, sep=',', index=False)
+
+
+
+def prg_ETL(mypath, current_week, min_by_min, list_of_regions, list_of_files):
+    list_of_regions, list_of_files = get_prg_files(current_week, min_by_min)
+    prg_df = parse_all_prg_files(list_of_regions, list_of_files)
+    min_by_min_df = compile_minute_df(mypath, min_by_min)
+    extrapolator = get_extrapolator(min_by_min_df)
+    dimensions, loop_dims = get_dimensions(min_by_min_df, prg_df)
+    cinemax_attributed_prg = CER_prg(prg_attribution(loop_dims, min_by_min_df, dimensions, extrapolator))
+    prg_output = mypath.replace('/Raw','')+'/Processed PRG files.csv'
+    cinemax_attributed_prg.to_csv(path_or_buf=prg_output, sep=',', index=False)
+
+
+###########################
+####### THE MAIN ##########
+###########################
+
 def main():
     from os import listdir
     from os.path import isfile, join
@@ -801,21 +837,47 @@ main()
 
 #%% Compile the benchmarks
 
-from datetime import timedelta
 
-
-date_sets = []
-for i in date_val:
-    week1 = i - timedelta(days=7)
-    week2 = week1 - timedelta(days=7)
-    week3 = week2 - timedelta(days=7)
-    week4 = week3 - timedelta(days=7)
-    week5 = week4 - timedelta(days=7)
-    date_sets.append([week1,week2,week3,week4,week5])
+# get the previous 5 weeks for our benchmark
+def get_benchmark_weeks(current_week):
+    week_num = int(current_week.replace('Week ',''))
     
+    benchmark_weeks = []
+    for i in range(5):
+        j = week_num - 1 - i
+        benchmark_weeks.append('Week '+str(j))
+        
+    return(benchmark_weeks)
 
 
-
-
-
-
+ # channel_rankers_df = compile_rankers(mypath, channel_rankers)
+        
+def compile_ranker_benchmark(file_path, channel_rankers, current_week, benchmark_weeks):
+    import pandas as pd
+    from tqdm import tqdm
+    
+    benchmark_weeks = get_benchmark_weeks('Week 38')
+    current_week = 'Week 38'
+    mypath = '//svrgsursp5/FTP/DOMO/Daily Reports/2019/Week 38/Raw'
+    channel_rankers, min_by_min = data_reader(mypath)
+    
+    df_list = []
+    print('\n','Compiling channel ranker benchmarks:')
+    
+    for week in tqdm(benchmark_weeks):
+        directory = mypath.replace(current_week, week)+'/'
+    
+        for filename, country in zip(channel_rankers['Filename'], channel_rankers['Country']):
+            temp_df = pd.read_csv(directory+filename,sep=';',skiprows=skipper(directory+filename),encoding='latin-1')
+            temp_df['Region'] = country
+            temp_df['Week'] = week
+            df_list.append(preproc_ranker(temp_df, export_ranking_features=False, convert_date=True))
+    
+    # stack all the data frames
+    channel_rankers_df = pd.concat(df_list, ignore_index=True, sort=False)
+    
+    # aggregate by day of week
+    channel_rankers_df = channel_rankers_df.groupby(['TimeBand', 'Target', 'Week Day', 'Channel','Region']).mean()
+    channel_rankers_df = channel_rankers_df.reset_index()
+    
+    return(channel_rankers_df)
