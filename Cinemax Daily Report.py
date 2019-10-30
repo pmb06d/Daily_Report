@@ -33,6 +33,16 @@ Created on Thu Sep 26 16:22:03 2019
 
 #%% Function compilation
 
+# GUI pop-up to select a path     
+def get_filepath():
+    import tkinter
+    from tkinter import filedialog
+    
+    root = tkinter.Tk()
+    root.withdraw()
+    return(filedialog.askopenfilename())
+
+
 # Gets the weeks available for processing in the directory
 def week_check(year):    
     from os import listdir
@@ -103,6 +113,19 @@ def get_mypath():
     return current_week, mypath
 
 
+# get the previous n weeks for our benchmark
+def get_benchmark_weeks(current_week, look_back):
+        
+    week_num = int(current_week.replace('Week ',''))
+    
+    benchmark_weeks = []
+    for i in range(look_back):
+        j = week_num - 1 - i
+        benchmark_weeks.append('Week '+str(j))
+        
+    return(benchmark_weeks)
+
+
 # Reads in all the text files and compiles them into two dataframes
 def data_reader(mypath):
     from os import listdir
@@ -143,15 +166,9 @@ def skipper(file):
         return(num)
 
 
-# GUI pop-up to select a path     
-def get_filepath():
-    import tkinter
-    from tkinter import filedialog
-    
-    root = tkinter.Tk()
-    root.withdraw()
-    return(filedialog.askopenfilename())
-
+###############################################
+######## Channel Ranker ETL Functions #########
+###############################################
 
 # Clean numeric IBOPE variable columns
 def clean_features(test_list, cleaned_features=False):
@@ -310,6 +327,35 @@ def compile_rankers(file_path, channel_rankers):
     return(channel_rankers_df)
 
 
+# get the previous n-week channel ranker files and aggregates them for the benchmark
+def compile_ranker_benchmark(file_path, channel_rankers, current_week, look_back=5):
+    import pandas as pd
+    from tqdm import tqdm
+    
+    benchmark_weeks = get_benchmark_weeks(current_week, look_back=look_back)
+    
+    df_list = []
+    print('\n','Compiling channel ranker benchmarks:')
+    
+    for week in tqdm(benchmark_weeks):
+        directory = file_path.replace(current_week, week)+'/'
+    
+        for filename, country in zip(channel_rankers['Filename'], channel_rankers['Country']):
+            temp_df = pd.read_csv(directory+filename,sep=';',skiprows=skipper(directory+filename),encoding='latin-1')
+            temp_df['Region'] = country
+            temp_df['Week'] = week
+            df_list.append(preproc_ranker(temp_df, export_ranking_features=False, convert_date=True))
+    
+    # stack all the data frames
+    channel_rankers_df = pd.concat(df_list, ignore_index=True, sort=False)
+    
+    # aggregate by day of week
+    channel_rankers_df = channel_rankers_df.groupby(['TimeBand', 'Target', 'Week Day', 'Channel','Region']).mean()
+    channel_rankers_df = channel_rankers_df.reset_index()
+    
+    return(channel_rankers_df)
+
+
 # Pre-process and add a ranking variable
 def process_ranker(ranker_df):
     import pandas as pd
@@ -339,6 +385,10 @@ def process_ranker(ranker_df):
     
     return(channel_rankers_preproc)
 
+
+################################################
+######## PRG Attribution ETL Functions #########
+################################################
 
 # Uses the zipfile library to extract files from a zip folder
 def extract_zip(input_zip):
@@ -560,6 +610,72 @@ def compile_minute_df(mypath, min_by_min):
     return(min_by_min_df)
 
 
+# A dictionary of dates to weekday to facilitate matching the benchmark to the PRGs
+def benchmark_dates(prg_df):
+    import pandas as pd
+    
+    current_dates = pd.Series(prg_df['Date'].unique())
+    weekday_dict = current_dates.dt.day_name()
+    weekday_dict = pd.DataFrame(zip(current_dates,weekday_dict), columns= ['Date','Weekday'])
+    weekday_dict = weekday_dict.set_index('Weekday').to_dict()
+    return(weekday_dict['Date'])
+
+
+# Compiles all the min-by-min text files and returns them in a dataframe
+def compile_minute_benchmark(mypath, min_by_min, current_week, prg_df, look_back=5):
+    import pandas as pd
+    from tqdm import tqdm
+    tqdm.pandas()
+    
+    benchmark_weeks = get_benchmark_weeks(current_week, look_back=look_back)
+    
+    temp_list = []
+    print('\n','Compiling the min-by-min benchmark:')
+    
+    for week in tqdm(benchmark_weeks):
+        directory = mypath.replace(current_week, week)+'/'
+    
+        for row in range(len(min_by_min)):
+            filename = min_by_min.iloc[row,1]
+            country = min_by_min.iloc[row,0]
+            
+            df = pd.read_csv(directory+filename, sep = ';',encoding='latin1' )
+            df['Region'] = country
+            df['Week'] = week
+            df.columns = clean_features(list(df))
+            temp_list.append(df)
+    
+    min_by_min_df = pd.concat(temp_list, sort = False)
+
+    print('\n','Normalizing targets:')
+    min_by_min_df.loc[:,'Target'] = min_by_min_df['Target'].progress_apply(target_normalizer)
+    min_by_min_df.loc[:,'Target'] = min_by_min_df['Target'].str.replace('Personas TV Suscripcion','Pay Universe')
+    
+    # the numeric variables
+    min_by_min_df.loc[:,'Rat#'] = to_numeric('Rat#',min_by_min_df)
+    
+    # drop the index if its there
+    try:
+        min_by_min_df.drop(' ', axis=1, inplace = True)
+    except:
+        pass
+                      
+    # aggregate by day of week
+    min_by_min_df = min_by_min_df.groupby(['Target', 'Week Day', 'Channel','Start Time', 'Region']).mean()
+    min_by_min_df = min_by_min_df.reset_index()
+    
+    # the times
+    min_by_min_df.loc[:,'Start Time'] = min_by_min_df['Start Time'].str.replace('\:00$','',regex=True)
+    
+    # A date column to make the matching easier
+    date_dict = benchmark_dates(prg_df)
+    
+    print('\n','Assigning benchmark by weekday:')
+    min_by_min_df.loc[:,'Date_val'] = min_by_min_df['Week Day'].progress_apply(lambda x: date_dict[x])
+    
+    return(min_by_min_df)
+    
+    
 # Maps the 5 minute intervals to 1 minute intervals
 def get_extrapolator(minute_df):
     import pandas as pd
@@ -584,12 +700,14 @@ def get_extrapolator(minute_df):
 # Compiles a dataframe with all the dimensions we need to average rating by PRG
 def get_dimensions(min_by_min_df, prg_df):
     import pandas as pd
+    from tqdm import tqdm 
     import itertools
     
     regional_list = []
     smaller_reg_list = []
     
-    for region in list(min_by_min_df['Region'].unique()):
+    print('\n','Compiling PRG attribution dimensions:')
+    for region in tqdm(list(min_by_min_df['Region'].unique())):
         dimensions = pd.DataFrame(list(itertools.product(list(min_by_min_df.loc[min_by_min_df['Region']==region,'Channel'].unique()),
                                                          list(min_by_min_df.loc[min_by_min_df['Region']==region,'Target'].unique()),
                                                          list(prg_df.loc[prg_df['Region']==region,'Insertion'].unique()))))
@@ -724,22 +842,63 @@ def CER_prg(attributed_prg):
     cinemax_attributed_prg = attributed_prg.loc[attributed_prg['Channel']=='Cinemax',keepers]
     return(cinemax_attributed_prg)
 
+#%%
 
-def channel_ranker_ETL(mypath, channel_rankers):
+###################################
+######## ETL Compilations #########
+###################################
+
+def channel_ranker_ETL(mypath, current_week, channel_rankers):
+    
+    # this weeks channel rankers
     channel_rankers_df = compile_rankers(mypath, channel_rankers)
-    channel_rankers = process_ranker(channel_rankers_df)
+    channel_rankers_df = process_ranker(channel_rankers_df)
+    channel_rankers_df['Daily_filter'] = 'This Week'
+    
+    # the previous n weeks rankers
+    channel_rankers_bench = compile_ranker_benchmark(mypath, channel_rankers, current_week, look_back=5)
+    channel_rankers_bench = process_ranker(channel_rankers_bench)
+    channel_rankers_bench['Daily_filter'] = 'Prev 5 Weeks'
+    
+    #stack
+    channel_rankers_df = channel_rankers_df.append(channel_rankers_bench,sort=False)
+    
+    #output
     cr_output = mypath.replace('/Raw','')+'/Processed Channel Rankers.csv'
-    channel_rankers.to_csv(path_or_buf=cr_output, sep=',', index=False)
+    channel_rankers_df.to_csv(path_or_buf=cr_output, sep=',', index=False)
 
 
-
-def prg_ETL(mypath, current_week, min_by_min, list_of_regions, list_of_files):
+def prg_ETL(mypath, current_week, min_by_min):
+    
+    current_week, mypath = get_mypath()
+    
+    channel_rankers, min_by_min = data_reader(mypath)
+    
+    # PRG file manipulation
     list_of_regions, list_of_files = get_prg_files(current_week, min_by_min)
     prg_df = parse_all_prg_files(list_of_regions, list_of_files)
+    
+    # min-by-min ratings for the current week
     min_by_min_df = compile_minute_df(mypath, min_by_min)
+    
+    #min-by-min ratings for the previous n-week benchmark
+    min_by_min_bench = compile_minute_benchmark(mypath, min_by_min, current_week, prg_df, look_back=5)
+    
+    # get attribution dimensions
     extrapolator = get_extrapolator(min_by_min_df)
     dimensions, loop_dims = get_dimensions(min_by_min_df, prg_df)
+    
+    # Attibution loop for the current week
     cinemax_attributed_prg = CER_prg(prg_attribution(loop_dims, min_by_min_df, dimensions, extrapolator))
+    cinemax_attributed_prg['Daily_filter'] = 'This Week'
+    
+    # Attibutes the previous 5 week average to the programs for this week
+    benchmark_prg = CER_prg(prg_attribution(loop_dims, min_by_min_bench, dimensions, extrapolator))
+    benchmark_prg['Daily_filter'] = 'This Week'
+    
+    #stack
+    cinemax_attributed_prg = cinemax_attributed_prg.append(benchmark_prg,sort=False)
+    
     prg_output = mypath.replace('/Raw','')+'/Processed PRG files.csv'
     cinemax_attributed_prg.to_csv(path_or_buf=prg_output, sep=',', index=False)
 
@@ -761,7 +920,6 @@ def main():
     
     channel_rankers, min_by_min = data_reader(mypath)
     
-    
     # Check if the csv exists already in the folder and if there are 7 dates
     # compile the channel rankers and add the ranking variable if not
         
@@ -774,15 +932,9 @@ def main():
         if len(avail_dates) == 7:
             print('\n','Channel rankers already complete for this week')
         else:
-            channel_rankers_df = compile_rankers(mypath, channel_rankers)
-            channel_rankers = process_ranker(channel_rankers_df)
-            cr_output = mypath.replace('/Raw','')+'/Processed Channel Rankers.csv'
-            channel_rankers.to_csv(path_or_buf=cr_output, sep=',', index=False)
+            channel_ranker_ETL(mypath, current_week, channel_rankers)
     else:
-        channel_rankers_df = compile_rankers(mypath, channel_rankers)
-        channel_rankers = process_ranker(channel_rankers_df)
-        cr_output = mypath.replace('/Raw','')+'/Processed Channel Rankers.csv'
-        channel_rankers.to_csv(path_or_buf=cr_output, sep=',', index=False)
+        channel_ranker_ETL(mypath, current_week, channel_rankers)
     
     
     # Check if the attributed prg csv exists already in the folder and if the dates match
@@ -835,49 +987,9 @@ main()
     
 #%% Optional: Create the dynamic ranker
 
-#%% Compile the benchmarks
+#%% Automate selection of 
 
 
-# get the previous 5 weeks for our benchmark
-def get_benchmark_weeks(current_week):
-    week_num = int(current_week.replace('Week ',''))
-    
-    benchmark_weeks = []
-    for i in range(5):
-        j = week_num - 1 - i
-        benchmark_weeks.append('Week '+str(j))
-        
-    return(benchmark_weeks)
 
 
- # channel_rankers_df = compile_rankers(mypath, channel_rankers)
-        
-def compile_ranker_benchmark(file_path, channel_rankers, current_week, benchmark_weeks):
-    import pandas as pd
-    from tqdm import tqdm
-    
-    benchmark_weeks = get_benchmark_weeks('Week 38')
-    current_week = 'Week 38'
-    mypath = '//svrgsursp5/FTP/DOMO/Daily Reports/2019/Week 38/Raw'
-    channel_rankers, min_by_min = data_reader(mypath)
-    
-    df_list = []
-    print('\n','Compiling channel ranker benchmarks:')
-    
-    for week in tqdm(benchmark_weeks):
-        directory = mypath.replace(current_week, week)+'/'
-    
-        for filename, country in zip(channel_rankers['Filename'], channel_rankers['Country']):
-            temp_df = pd.read_csv(directory+filename,sep=';',skiprows=skipper(directory+filename),encoding='latin-1')
-            temp_df['Region'] = country
-            temp_df['Week'] = week
-            df_list.append(preproc_ranker(temp_df, export_ranking_features=False, convert_date=True))
-    
-    # stack all the data frames
-    channel_rankers_df = pd.concat(df_list, ignore_index=True, sort=False)
-    
-    # aggregate by day of week
-    channel_rankers_df = channel_rankers_df.groupby(['TimeBand', 'Target', 'Week Day', 'Channel','Region']).mean()
-    channel_rankers_df = channel_rankers_df.reset_index()
-    
-    return(channel_rankers_df)
+
