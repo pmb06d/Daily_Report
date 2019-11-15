@@ -611,10 +611,10 @@ def compile_minute_df(mypath, min_by_min):
 
 
 # A dictionary of dates to weekday to facilitate matching the benchmark to the PRGs
-def benchmark_dates(prg_df):
+def benchmark_dates(prg_df, field='Date'):
     import pandas as pd
     
-    current_dates = pd.Series(prg_df['Date'].unique())
+    current_dates = pd.Series(prg_df[field].unique())
     weekday_dict = current_dates.dt.day_name()
     weekday_dict = pd.DataFrame(zip(current_dates,weekday_dict), columns= ['Date','Weekday'])
     weekday_dict = weekday_dict.set_index('Weekday').to_dict()
@@ -842,8 +842,6 @@ def CER_prg(attributed_prg):
     cinemax_attributed_prg = attributed_prg.loc[attributed_prg['Channel']=='Cinemax',keepers]
     return(cinemax_attributed_prg)
 
-#%%
-
 ###################################
 ######## ETL Compilations #########
 ###################################
@@ -870,10 +868,6 @@ def channel_ranker_ETL(mypath, current_week, channel_rankers):
 
 def prg_ETL(mypath, current_week, min_by_min):
     
-    current_week, mypath = get_mypath()
-    
-    channel_rankers, min_by_min = data_reader(mypath)
-    
     # PRG file manipulation
     list_of_regions, list_of_files = get_prg_files(current_week, min_by_min)
     prg_df = parse_all_prg_files(list_of_regions, list_of_files)
@@ -894,14 +888,20 @@ def prg_ETL(mypath, current_week, min_by_min):
     
     # Attibutes the previous 5 week average to the programs for this week
     benchmark_prg = CER_prg(prg_attribution(loop_dims, min_by_min_bench, dimensions, extrapolator))
-    benchmark_prg['Daily_filter'] = 'This Week'
+    benchmark_prg['Daily_filter'] = 'Prev 5 Weeks'
     
     #stack
     cinemax_attributed_prg = cinemax_attributed_prg.append(benchmark_prg,sort=False)
     
+    
+    
+    
+    
+    
     prg_output = mypath.replace('/Raw','')+'/Processed PRG files.csv'
     cinemax_attributed_prg.to_csv(path_or_buf=prg_output, sep=',', index=False)
 
+#%%
 
 ###########################
 ####### THE MAIN ##########
@@ -946,38 +946,10 @@ def main():
         if len(avail_dates) == 7:
             print('\n','PRG and min-by-min data is already complete for this week')
         else:
-            list_of_regions, list_of_files = get_prg_files(current_week, min_by_min)
-            
-            prg_df = parse_all_prg_files(list_of_regions, list_of_files)
-            
-            min_by_min_df = compile_minute_df(mypath, min_by_min)
-            
-            extrapolator = get_extrapolator(min_by_min_df)
-            
-            dimensions, loop_dims = get_dimensions(min_by_min_df, prg_df)
-            
-            cinemax_attributed_prg = CER_prg(prg_attribution(loop_dims, min_by_min_df, dimensions, extrapolator))
-            
-            prg_output = mypath.replace('/Raw','')+'/Processed PRG files.csv'
-            
-            cinemax_attributed_prg.to_csv(path_or_buf=prg_output, sep=',', index=False)
+            prg_ETL(mypath, current_week, min_by_min)
     
     else:
-        list_of_regions, list_of_files = get_prg_files(current_week, min_by_min)
-        
-        prg_df = parse_all_prg_files(list_of_regions, list_of_files)
-        
-        min_by_min_df = compile_minute_df(mypath, min_by_min)
-        
-        extrapolator = get_extrapolator(min_by_min_df)
-        
-        dimensions, loop_dims = get_dimensions(min_by_min_df, prg_df)
-        
-        cinemax_attributed_prg = CER_prg(prg_attribution(loop_dims, min_by_min_df, dimensions, extrapolator))
-        
-        prg_output = mypath.replace('/Raw','')+'/Processed PRG files.csv'
-        
-        cinemax_attributed_prg.to_csv(path_or_buf=prg_output, sep=',', index=False)
+        prg_ETL(mypath, current_week, min_by_min)
         
     print('\n',"--- %s seconds ---" % (time.time() - start_time))
 
@@ -989,7 +961,165 @@ main()
 
 #%% Automate selection of 
 
+def round_start_hour(time_str, interval=5):
+    hour = int(time_str[:2])
+    minutes = int(time_str[-2:])
+    
+    if minutes !=0:
+        if minutes >= 60-interval:
+            hour += 1
+        elif minutes <= 0+interval:
+            hour -= 1
+    
+    return(hour)
 
 
 
 
+
+file = get_filepath()
+cinemax_attributed_prg = pd.read_csv(file)
+
+current_week, mypath = get_mypath()
+    
+channel_rankers, min_by_min = data_reader(mypath)
+
+list_of_regions, list_of_files = get_prg_files(current_week, min_by_min)
+
+prg_df = parse_all_prg_files(list_of_regions, list_of_files)
+
+prg_df2 = prg_df.copy()
+
+
+
+def franchise_id(prg_df):
+    import pandas as pd
+    import re
+    
+    prg_df.loc[:,'Start_hour'] = prg_df['Start_time_str'].apply(round_start_hour)
+    date_dict = benchmark_dates(prg_df)
+    
+    # output form for primetime franchises
+    output_form = pd.read_excel('//svrgsursp5/FTP/DOMO/Daily Reports/output_form.xlsx')
+    output_form.loc[:,'Date'] = output_form['DOW'].apply(lambda x: date_dict[x])
+    
+    # cpt for the list of Cine Para Todos titles
+    cpt = pd.read_excel('//svrgsursp5/FTP/DOMO/Daily Reports/CPT.xlsx')
+    this_week = list(prg_df['Date'].unique())
+    cpt = cpt.loc[cpt['Date'].isin(this_week),:]
+    cpt.loc[cpt['Country']=='PAN','Country'] = 'Colombia'
+
+      
+    prg_df2 = prg_df.merge(output_form, how='left', left_on=['Region','Date','Start_hour'], right_on=['Region','Date','Start_time'])
+    features = list(prg_df)
+    features.append('Franchise')
+    prg_df2 = prg_df2.loc[:,features]
+    
+    cpt_df = prg_df2.loc[(prg_df2['Date'].isin(list(cpt['Date'].unique())))&
+                         (prg_df2['Start_hour']>12)&
+                         (prg_df2['Start_hour']<17),
+                         ['Region','Description','Desc2','Date','Start_time_str']]
+    
+    
+    
+    prime_franchise_check = prg_df2.groupby(['Region','Description', 'Franchise','Start_time_str']).size().reset_index().rename(columns={0:'count'})
+
+    series_list = list(prg_df2.loc[prg_df2['Desc2'].str.contains('SERIES', regex=True)==True,'Description'].unique())
+    
+    series_regex = re.compile('(^.+?)(?=\:\s*[SEASON]*)')
+    season_regex = re.compile('\:\sS[EASON\s]*([0-9]+)')
+    episode_regex = re.compile('(?<=[#PART])\s[0-9]+[/0-9]*')
+    
+    series_name = []
+    season_number = []
+    episode_number = []
+                
+    for item in series_list:
+        try:
+            series_name.append(series_regex.findall(item)[0])
+        except:
+            series_name.append(item)
+            
+        try:
+            season_number.append(season_regex.findall(item)[0])
+        except:
+            season_number.append(1)
+            
+        try:
+            episode_number.append(episode_regex.findall(item)[0])
+        except:
+            episode_number.append(None)
+            
+    series_df = pd.DataFrame(list(zip(series_list,series_name,season_number,episode_number)),columns = ['PRG','Series_name','Season_number','Episode'])
+    prg_df3 = prg_df2.merge(series_df, how='left', left_on='Description', right_on='PRG')
+    
+    export_fields = ['Date',
+                     'Start_time_str',
+                     'Description',
+                     'Desc2',
+                     'Desc3',
+                     'Desc4',
+                     'Desc5',
+                     'Region',
+                     'Franchise',
+                     'Series_name',
+                     'Season_number',
+                     'Episode']
+    
+    
+    
+    return(prg_df3, prime_franchise_check)
+
+
+prg_df, franchise_check = franchise_id(prg_df)
+
+
+#%% Fuzzy Matching for the CPT titles
+
+## A function to match the names 
+def match(list_a, list_b, a_name='Main', b_name='Matcher', score=95, print_nonmatch=False, export_nonmatch=False):
+    import pandas as pd
+    from fuzzywuzzy import process
+
+    # some lists to compile information
+    matched_list = []
+    non_matches = []
+    team_name = []
+    similarity_score = []
+    
+    # go through the main list and get the best match (only scores above the given number or 95 by default)
+    for i in list_a:
+        matched_list.append(process.extractOne(i, list_b, score_cutoff=score))
+    
+    # fuzzy wuzzy likes to output a tuple with the match and the similarity score, append none if there is nothing in the row    
+    for tup in matched_list:
+        if tup==None:
+            team_name.append(None)
+            similarity_score.append(None)
+        else:
+            team_name.append(tup[0])
+            similarity_score.append(tup[1])
+    
+    # Compile into a dataframe
+    matched = pd.DataFrame(list(zip(list_a,matched_list,team_name,similarity_score)),columns= [a_name,str(b_name+"_(raw)"),str(b_name),str(b_name+"_Similarity")])
+    matched = matched.set_index(a_name)
+    
+    # Compiling this name here makes it easier to index the DF ti print out a mtaching statement
+    b_raw = str(str(b_name)+"_(raw)")
+    print('\n',sum(matched[b_raw].value_counts()),"/ "+str(len(list_a)),"("+str(round(sum(matched[b_raw].value_counts())/len(list_a),2)*100)+"%)",'matches','\n')
+    
+    # compile non-matches in case the user wants to see them
+    non_matches = matched.reset_index()
+    non_matches = list(non_matches.loc[non_matches[str(b_name+"_Similarity")].isna(),a_name])
+    matched = matched.loc[matched[str(b_name+"_Similarity")].notna(),]
+            
+     # print the non-matches if the parameter is given
+    if print_nonmatch == True:
+        print("--->",str(len(non_matches))+" non-matching item(s):")
+        for i in non_matches:
+            print(i)
+    
+    if export_nonmatch == True:
+        return(matched,non_matches)
+    else:
+        return(matched)
